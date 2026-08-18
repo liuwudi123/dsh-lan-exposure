@@ -1,0 +1,7 @@
+# dsh-lan-exposure bundle patch:
+# Inserts one host plugin row that opens an in-process LAN-facing reverse
+# proxy. The plugin reads its knobs from environment variables (see README),
+# so no `config:` schema is needed and the row stays minimal.
+- insert:
+    - id: lan-exposure
+      name: '@dsh-lan-exposure/lan'
