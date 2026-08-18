@@ -1,67 +1,119 @@
 # dsh-lan-exposure
 
-把 dsh 本地 Web GUI（默认只监听 `127.0.0.1:3080`）暴露到局域网，让手机/同网设备访问。
+[![dsh plugin](https://img.shields.io/badge/dsh-plugin-blue)](https://github.com/deepseek-ai/deepseek-harness) [![MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE) [![version](https://img.shields.io/badge/version-0.1.0-lightgrey)](https://github.com/liuwudi123/dsh-lan-exposure)
 
-dsh 出于安全**故意不绑定 `0.0.0.0`**，所以跨设备访问必须靠反向代理转发到回环。本插件在 **dsh 进程内**开一个 `0.0.0.0:<port>` 的代理，把请求转发给 `127.0.0.1:3080`，并：
+Expose the [dsh](https://github.com/deepseek-ai/deepseek-harness) Web GUI to your LAN — your phone, tablet, or any same-WiFi device sees the same UI in real time.
 
-- 改写 `Host` / `Origin` 头，过 dsh 信任围栏；
-- 转发 WebSocket / SSE 升级（GUI 实时输出靠它）；
-- 给手机浏览器注入 `crypto.randomUUID` polyfill（非安全上下文下缺失）；
-- 用 `ctx.effect` 注册生命周期，插件卸载自动关闭。
+## Why
 
-## 安装（作为 dsh 插件）
+dsh's web GUI only binds to `127.0.0.1` (the CLI explicitly rejects `0.0.0.0` for safety), so phones on the same WiFi can't reach it directly. This plugin runs an **in-process reverse proxy** inside the dsh web process:
 
-在 dsh 仓库根目录执行：
+- Listens on `0.0.0.0:8080` (configurable) and forwards to `127.0.0.1:3080`
+- Rewrites `Host` and `Origin` headers to pass dsh's trust fence
+- Bridges WebSocket / SSE upgrades (real-time streaming keeps working)
+- Injects a `crypto.randomUUID` polyfill for phone browsers
+- Shows a live connection-status badge in the bottom-right of every page
+- Exposes a tiny status endpoint the badge polls
+- Zero external dependencies (Node built-ins only)
+- Self-cleaning lifecycle via `ctx.effect`
 
-**从 GitHub 安装（推荐，给别人用）**
+You get a phone that mirrors your desktop — same sessions, same streaming output — without touching dsh source.
 
-```cmd
-pnpm dsh plugin --profile web add github:<你的用户名>/dsh-lan-exposure
+## Install
+
+In your dsh checkout:
+
+```bash
+# from GitHub (recommended)
+pnpm dsh plugin --profile web add github:liuwudi123/dsh-lan-exposure
+
+# local development
+pnpm dsh plugin --profile web add /path/to/dsh-lan-exposure
 ```
 
-**本地开发安装**
+Then start dsh web:
 
-```cmd
-pnpm dsh plugin --profile web add ../dsh-lan-exposure
+```bash
+pnpm dsh web --host 127.0.0.1 --port 3080
 ```
 
-装完后随 `pnpm dsh web` 自动激活，无需单独启动脚本。本地路径安装是 `link:` 模式，改插件源码后**重启 dsh web 即生效**，无需重新 add。
-
-## 更新
-
-- GitHub 安装：重新 `add` 一次（或 git pull 后重 add）即拉到最新版本。
-- 本地安装：改代码 + 重启 dsh web 即可。
-
-## GitHub 标签（Topics，方便被搜到）
-
-建仓后在仓库页 **About → Topics** 添加：
+You should see in the log:
 
 ```
-dsh  deepseek-harness  deepseek  plugin  cordis  lan  remote  mobile  web-ui  reverse-proxy
+[dsh-lan-exposure] listening on http://0.0.0.0:8080 -> http://127.0.0.1:3080
+[dsh-lan-exposure] phone URL: http://<your LAN IP>:8080
 ```
 
-别人就能通过 `dsh plugin`、`deepseek-harness plugin` 等关键词在 GitHub 搜到本项目。
+Open the URL on your phone (same WiFi). The UI is identical; open the **same session** on both for real-time sync.
 
-## 卸载 / 关闭
+## Update
 
-```cmd
+- **GitHub install**: re-run `add`, or pull the clone and re-add.
+- **Local link install**: edit + restart `dsh web` — the `link:` mode picks up source changes live.
+
+## Uninstall
+
+```bash
 pnpm dsh plugin --profile web remove @dsh-lan-exposure/lan
 ```
 
-## 配置（环境变量，加载时读取一次）
+## Configuration
 
-| 变量 | 默认 | 说明 |
+All via environment variables, read once on plugin load.
+
+| Variable | Default | Description |
 |---|---|---|
-| `DSH_LAN_PORT` | `8080` | 手机访问的监听端口 |
-| `DSH_LAN_LISTEN_HOST` | `0.0.0.0` | 监听网卡 |
-| `DSH_LAN_TARGET_HOST` | `127.0.0.1` | dsh 回环地址 |
-| `DSH_LAN_TARGET_PORT` | `3080` | dsh 回环端口 |
-| `DSH_LAN_AUTH_USER` / `DSH_LAN_AUTH_PASS` | 不设置=关 | basic-auth（浏览器对 SSE/WS 不自动带凭据，开着会挡实时通道） |
+| `DSH_LAN_PORT` | `8080` | Port the proxy listens on (phone hits this) |
+| `DSH_LAN_LISTEN_HOST` | `0.0.0.0` | Listen address |
+| `DSH_LAN_TARGET_HOST` | `127.0.0.1` | dsh's loopback address |
+| `DSH_LAN_TARGET_PORT` | `3080` | dsh's loopback port (must match `dsh web --port`) |
 
-## 使用
+`DSH_LAN_TARGET_PORT` must match the port passed to `dsh web --port`. Change both together.
 
-1. `pnpm dsh web --host 127.0.0.1 --port 3080`
-2. 手机浏览器打开 `http://<电脑LAN IP>:8080`
-3. 左侧会话列表点开**和电脑同一个会话**，两边实时同步。
+## Connection Status Badge
 
-> 安全提示：该代理默认无鉴权。正式"随处可用"建议走 Tailscale / cloudflared 隧道（自带鉴权+加密），不要直接裸奔到公网。
+Every proxied page shows a small black pill in the bottom-right corner:
+
+- **Green** — `已监听 :8080 · N 台设备`. N is the number of **unique IPs** currently connected (a single phone opening two WS channels counts as one device).
+- **Red** — `未监听` or `状态获取失败`. Proxy not running or unreachable.
+
+The badge is injected into the page and self-heals against SPA re-renders (mounted to `<html>` root, recreated by `MutationObserver`).
+
+## Compatibility
+
+- dsh master (Node 22+, pnpm 11+)
+- dsh versions that reject `--host 0.0.0.0` (the whole reason this plugin exists)
+- Tested on Windows + Chrome, iOS Safari, Android WeChat browser
+
+## Security
+
+This proxy has **no authentication by default** — it's intended for trusted WiFi. For cross-network access, don't expose the port directly. Put it behind:
+
+- **Tailscale** (recommended for personal cross-network)
+- **cloudflared** (public access with Cloudflare Access auth)
+- A reverse proxy with basic auth — note that browsers don't send auth on WS/SSE auto-reconnect, which breaks real-time, so this is not a clean fit.
+
+Don't expose `0.0.0.0:8080` to the public internet without a tunnel.
+
+## How It Works
+
+```
+phone browser --HTTP/WS--> 0.0.0.0:8080 (this plugin)
+                                  |
+                                  |- rewrite Host/Origin -> 127.0.0.1:3080
+                                  |- inject crypto.randomUUID polyfill
+                                  |- inject connection-monitor script
+                                  |- forward body / pipe WebSocket
+                                  v
+                          dsh web (127.0.0.1:3080)
+                                  |
+                                  |- emits session events on the mux WS
+                                  v
+                          phone receives the same events as desktop
+```
+
+The "real-time sync" is just two clients (desktop + phone) subscribed to the same server-side session. The plugin's only job is making the phone reachable.
+
+## License
+
+MIT
